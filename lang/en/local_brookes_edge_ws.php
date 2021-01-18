@@ -26,3 +26,10 @@
 $string['privacy:metadata'] = 'The BrookesEDGE web service plugin is an interface to Moodle courses and blogs and does not itself store any personal data.';
 
 $string['pluginname'] = 'BrookesEDGE web service';
+
+$string['submission_failure'] = 'Sorry, your submission only has a combined total of {$a->word_count} words.  It must have at least {$a->minimum_words}.';
+$string['submission_first'] = 'Congratulations! You\'re on your way to getting the EDGE!';
+$string['submission_general'] = 'Well done!  You have now submitted {$a->entries} against {$a->attributes}.';
+$string['submission_edge'] = 'Many congratulations! Having submitted {$a->entries} against {$a->attributes} you now have the EDGE!';
+$string['certificate_message'] = 'You will be sent your certificate once your submissions have been verified.';
+$string['notification'] = '{$a->firstname} {$a->lastname} ({$a->username}) has the EDGE!';

@@ -240,7 +240,7 @@ class local_brookes_edge_ws_external extends external_api {
         // Capability checking
 		require_capability('moodle/blog:create', $context);
 
-		$faculties = self::get_faculties(); // User's course categories mapped to faculty abbreviations
+		$faculties = self::__get_faculties(); // User's course categories mapped to faculty abbreviations
 
 		$sql = 'SELECT c.shortname AS name, c.id AS id, c.visible AS visible, c.summary AS description, substr(c.idnumber, 6) AS codes
 			FROM {course} c
@@ -731,7 +731,11 @@ class local_brookes_edge_ws_external extends external_api {
 	}
 
 	public static function submit_entry_returns() {
-		return null;
+		return new external_single_structure(
+			array(
+				'message' => new external_value(PARAM_TEXT, 'Submission message')
+			)
+		);
 	}
 
 	public static function submit_entry($id) {
@@ -757,6 +761,13 @@ class local_brookes_edge_ws_external extends external_api {
 
 		// Get the given entry
 		$rec = $DB->get_record('local_brookes_edge_entries', array('id' => $params['id'], 'author_id' => $USER->id), '*', MUST_EXIST);
+		
+		// Check the word count
+		$word_count = str_word_count($rec->situation) + str_word_count($rec->task) + str_word_count($rec->action) + str_word_count($rec->result);
+		$minimum_words = get_config('local_brookes_edge', 'minimum_words');
+		if ($word_count < $minimum_words) {
+			return array('message' => get_string('submission_failure', 'local_brookes_edge_ws', array('word_count' => $word_count, 'minimum_words' => $minimum_words)));
+		}
 
 		$rec->submitted = 1;
 
@@ -765,8 +776,49 @@ class local_brookes_edge_ws_external extends external_api {
 		$rec->update_time = $date->getTimestamp();
 
 		$DB->update_record('local_brookes_edge_entries', $rec);
+		
+		// Check what they have, save any new award and determine a relevant message
+		$edge = $DB->record_exists('local_brookes_edge_awards', array('recipient_id' => $USER->id)); // Already have the award?
+		$count = self::__count_submissions();
+		if ($count['entries'] == 1) {
+			$entries = get_string('entry', 'local_brookes_edge');
+		} else {
+			$entries = get_string('entries', 'local_brookes_edge', $count['entries']);
+		}
+		if ($count['attributes'] == 1) {
+			$attributes = get_string('attribute', 'local_brookes_edge');
+		} else {
+			$attributes = get_string('attributes', 'local_brookes_edge', $count['attributes']);
+		}
+		$minimum_entries = get_config('local_brookes_edge', 'minimum_entries');
+		$minimum_attributes = get_config('local_brookes_edge', 'minimum_attributes');
+		if (!$edge && ($count['entries'] >= $minimum_entries) && ($count['attributes'] >= $minimum_attributes)) { // AWARD!!!
+			$rec = new stdClass();
+			$rec->id = 0;
+			$rec->recipient_id = $USER->id;
+			$rec->award_time = $date->getTimestamp();
+			$rec_id = $DB->insert_record('local_brookes_edge_awards', $rec);
+			$message = get_string('submission_edge', 'local_brookes_edge_ws', array('entries' => $entries, 'attributes' => $attributes));
+			$admin = get_complete_user_data('username', 'brookes_edge');
+			$admin->customheaders = array ( // Add email headers to help prevent auto-responders
+				'Precedence: Bulk',
+				'X-Auto-Response-Suppress: All',
+				'Auto-Submitted: auto-generated'
+			);
+			$user = get_complete_user_data('id', $USER->id);
+			$salutation = get_string('salutation', 'local_brookes_edge') . ' ' . $user->firstname;
+			$html = '<p>' . $salutation . '</p><p>' . $message . '</p><p>' . get_string('certificate_message', 'local_brookes_edge_ws')
+				. '</p><p>' . get_string('closing', 'local_brookes_edge') . '</p><p>' . $admin->firstname . ' ' . $admin->lastname . '</p>';
+			email_to_user($user, $admin, get_string('title', 'local_brookes_edge'), html_to_text($html), $html);
+			$html = get_string('notification', 'local_brookes_edge_ws', array('firstname' => $user->firstname, 'lastname' => $user->lastname, 'username' => $user->username));
+			email_to_user($admin, $admin, get_string('title', 'local_brookes_edge'), html_to_text($html), $html);
+		} else if ($count['entries'] > 1) {
+			$message = get_string('submission_general', 'local_brookes_edge_ws', array('entries' => $entries, 'attributes' => $attributes));
+		} else { 
+			$message = get_string('submission_first', 'local_brookes_edge_ws');
+		}
 
-		return;
+		return array('message' => $message);
 	}
 
 	public static function delete_entry_parameters() {
@@ -805,7 +857,7 @@ class local_brookes_edge_ws_external extends external_api {
 		return;
 	}
 
-	private static function get_faculties() { 
+	private static function __get_faculties() { 
 		global $DB, $USER;
 
 		$role = $DB->get_record('role', array('shortname' => 'student'), 'id', MUST_EXIST);
@@ -872,5 +924,28 @@ class local_brookes_edge_ws_external extends external_api {
 		}
 		
 		return $faculties;
+	}
+
+	private static function __count_submissions() { 
+		global $DB, $USER;
+
+		$sql = 'SELECT id, attribute_code '
+			. 'FROM {local_brookes_edge_entries} '
+			. 'WHERE author_id = ? '
+			. '  AND submitted = 1 '
+			. 'ORDER BY title';
+		
+		$submissions = $DB->get_records_sql($sql, array($USER->id));
+
+		$entries = array();
+		$attributes = array();
+		foreach ($submissions as $submission) {
+			$entries[] = array('id' => $submission->id);
+			if (!in_array($submission->attribute_code, $attributes)) {
+				$attributes[] = $submission->attribute_code;
+			}
+		}
+		
+		return array('entries' => count($entries), 'attributes' => count($attributes));
 	}
 }
